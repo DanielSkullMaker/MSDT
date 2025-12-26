@@ -1,0 +1,586 @@
+CODE REVIEW
+===========
+
+Файл: main.py
+Дата ревью: 2025
+
+ОБЩИЕ ЗАМЕЧАНИЯ
+---------------
+
+Код представляет собой рекурсивный решатель игровой задачи с рыцарем и монстрами. 
+В целом логика реализована, но есть несколько областей для улучшения.
+
+
+1. ИСПОЛЬЗОВАНИЕ ГЛОБАЛЬНЫХ ПЕРЕМЕННЫХ
+-------------------------------------
+Строки: 54-56, 419, 479-483
+
+Проблема: Нарушение принципа инкапсуляции (SOLID), использование глобальных переменных 
+(cost_best, history_best, bails, history_complete) усложняет тестирование и делает код 
+менее предсказуемым.
+
+Предложение: Вынести решение в класс или передавать состояние через параметры. 
+Можно создать класс Solver, который будет хранить состояние:
+
+```python
+class Solver:
+    def __init__(self):
+        self.cost_best = 9999
+        self.history_best = []
+        self.bails = 0
+        self.history_complete = []
+    
+    def solve(self, history):
+        cost = history[-1][2]
+        health_left = self.monster_health_remaining(history)
+        if not health_left:
+            if self.cost_best > cost:
+                self.cost_best = cost
+                self.history_best = history
+            return
+        # ... остальная логика
+```
+
+Это улучшит тестируемость и позволит запускать несколько решений параллельно.
+
+
+2. МАГИЧЕСКИЕ ЧИСЛА И СТРОКИ
+-----------------------------
+Строки: 80, 70, 60, 50, 152-157, 199, 211, 230, 249, 268, 482
+
+Проблема: Нарушение принципа читаемости кода. Магические числа (80, 70, 60, 50) 
+и строки ('NESW') разбросаны по коду без объяснения их значения.
+
+Предложение: Вынести все константы в начало файла с понятными именами:
+
+```python
+# Weapon costs
+SWORD_COST = 80
+SPEAR_COST = 70
+BOW_COST = 60
+DAGGER_COST = 50
+
+# Monster health
+MONSTER_RED_HEALTH = 3
+MONSTER_PURPLE_HEALTH = 2
+MONSTER_BLUE_HEALTH = 1
+
+# Directions
+DIRECTIONS = 'NESW'  # North, East, South, West
+
+# Initial values
+INITIAL_BEST_COST = 9999
+```
+
+Это сделает код более самодокументируемым и упростит изменение параметров в будущем.
+
+
+3. ДУБЛИРОВАНИЕ КОДА (НАРУШЕНИЕ DRY)
+-------------------------------------
+Строки: 178-275, 278-329, 332-373, 376-413
+
+Проблема: Функции check_sword_attacks, check_spear_attacks, check_bow_attacks, 
+check_dagger_attacks содержат очень похожую логику проверки направлений. 
+Каждая функция повторяет проверки для N, E, S, W с небольшими вариациями.
+
+Предложение: Вынести общую логику в отдельные функции или использовать 
+структуру данных для описания атак:
+
+```python
+DIRECTION_OFFSETS = {
+    'N': {'row': -1, 'col': 0, 'attack_pattern': [(-1, -1), (-1, 0), (-1, 1)]},
+    'E': {'row': 0, 'col': 1, 'attack_pattern': [(-1, 1), (0, 1), (1, 1)]},
+    'S': {'row': 1, 'col': 0, 'attack_pattern': [(1, -1), (1, 0), (1, 1)]},
+    'W': {'row': 0, 'col': -1, 'attack_pattern': [(-1, -1), (0, -1), (1, -1)]}
+}
+
+def check_sword_attacks(history, r, c):
+    state = history[-1][0]
+    for direction, offsets in DIRECTION_OFFSETS.items():
+        attacks = []
+        # Общая логика проверки для всех направлений
+        # ...
+```
+
+Или можно создать базовую функцию для проверки атак и передавать в неё параметры 
+конкретного оружия.
+
+
+4. ВЫСОКАЯ ЦИКЛОМАТИЧЕСКАЯ СЛОЖНОСТЬ
+-------------------------------------
+Строки: 178-275 (check_sword_attacks)
+
+Проблема: Функция check_sword_attacks имеет очень высокую цикломатическую сложность 
+из-за множества вложенных условий и повторяющихся блоков кода для каждого направления.
+
+Предложение: Разбить функцию на более мелкие функции, каждая из которых отвечает 
+за проверку одного направления:
+
+```python
+def check_sword_attack_north(history, r, c):
+    state = history[-1][0]
+    attacks = []
+    monster_count = 0
+    for c_offset in range(-1, 2):
+        if state[r - 1][c + c_offset] in MONSTERS:
+            monster_count += 1
+    # ... логика для севера
+    
+def check_sword_attacks(history, r, c):
+    check_sword_attack_north(history, r, c)
+    check_sword_attack_east(history, r, c)
+    check_sword_attack_south(history, r, c)
+    check_sword_attack_west(history, r, c)
+```
+
+Или использовать более общий подход с параметризацией направлений.
+
+
+5. НЕЭФФЕКТИВНАЯ ПРОВЕРКА ДУБЛИКАТОВ
+-------------------------------------
+Строки: 436-437
+
+Проблема: Проверка `[state, cost] not in history_complete` выполняется за O(n), 
+где n - размер списка. При большом количестве состояний это может стать узким местом.
+
+Предложение: Использовать set или frozenset для хранения состояний. Однако, так как 
+state - это список списков (не хешируемый тип), можно использовать строковое 
+представление или tuple:
+
+```python
+# В начале функции solve или в __init__ класса
+history_complete = set()
+
+# В do_attacks
+state_key = tuple(tuple(row) for row in state)
+state_cost_key = (state_key, cost)
+if state_cost_key not in history_complete:
+    history_complete.add(state_cost_key)
+    # ...
+```
+
+Это изменит сложность проверки с O(n) на O(1) в среднем случае.
+
+
+6. ИСПОЛЬЗОВАНИЕ COPY.DEEPCOPY
+------------------------------
+Строки: 122, 129, 136, 143, 421-422
+
+Проблема: copy.deepcopy может быть очень медленной операцией, особенно при частом 
+вызове в рекурсивных функциях. Это может существенно замедлить выполнение программы.
+
+Предложение: Рассмотреть возможность использования более легковесных операций, 
+если полное глубокое копирование не требуется. Например, можно копировать только 
+необходимые части состояния:
+
+```python
+# Вместо полного deepcopy можно копировать только изменяемые части
+def copy_state(state):
+    return [row[:] for row in state]  # Поверхностное копирование списков
+```
+
+Однако нужно убедиться, что внутренние списки не изменяются в других местах. 
+Если это игровое поле, где каждый элемент - строка или символ, поверхностного 
+копирования может быть достаточно.
+
+
+7. ОТСУТСТВИЕ ОБРАБОТКИ ОШИБОК
+-------------------------------
+Строки: 121, 128, 135, 142, 199, 218, 237, 256, 296, 304, 312, 320, 340, 348, 356, 364, 384, 391, 398, 405, 427
+
+Проблема: Код обращается к элементам массива по индексам без проверки границ. 
+Если координаты выйдут за пределы массива, возникнет IndexError.
+
+Предложение: Добавить проверки границ или использовать безопасные методы доступа:
+
+```python
+def safe_get_cell(state, r, c, default=None):
+    """Безопасное получение ячейки с проверкой границ."""
+    if 0 <= r < len(state) and 0 <= c < len(state[0]):
+        return state[r][c]
+    return default
+
+# Использование:
+if safe_get_cell(state, r - 1, c) == FLOOR:
+    # ...
+```
+
+Или можно добавить проверки перед обращением:
+
+```python
+if r > 0 and state[r - 1][c] == FLOOR:
+    # ...
+```
+
+
+8. НЕКОНСИСТЕНТНОЕ ИСПОЛЬЗОВАНИЕ ИНДЕКСОВ
+-----------------------------------------
+Строки: 36-37, 77-79, 115-118
+
+Проблема: Код использует индексацию вида `history[-1][0]`, `loc[0]`, `loc[1]` без 
+понятных имен. Это снижает читаемость.
+
+Предложение: Использовать именованные кортежи или словари для улучшения читаемости:
+
+```python
+from collections import namedtuple
+
+HistoryEntry = namedtuple('HistoryEntry', ['state', 'action', 'cost', 'location'])
+Location = namedtuple('Location', ['row', 'col'])
+
+# Использование:
+entry = history[-1]
+state = entry.state
+location = entry.location
+r = location.row
+c = location.col
+```
+
+Это сделает код более самодокументируемым и менее подверженным ошибкам.
+
+
+9. ПОВТОРЯЮЩИЕСЯ ЦИКЛЫ В ФУНКЦИИ SOLVE
+---------------------------------------
+Строки: 85-103
+
+Проблема: В функции solve есть четыре почти идентичных цикла, которые отличаются 
+только вызываемой функцией. Это нарушение DRY.
+
+Предложение: Использовать список функций или словарь для упрощения:
+
+```python
+attack_functions = [
+    check_sword_attacks,
+    check_spear_attacks,
+    check_dagger_attacks,
+    check_bow_attacks
+]
+
+for attack_func in attack_functions:
+    for loc in valid_floors:
+        attack_func(history, loc[0], loc[1])
+```
+
+Или, если важен порядок (судя по комментарию "Complete all swords first"):
+
+```python
+# Complete all swords first; seems to work faster
+for loc in valid_floors:
+    check_sword_attacks(history, loc[0], loc[1])
+
+# Then other weapons
+for attack_func in [check_spear_attacks, check_dagger_attacks, check_bow_attacks]:
+    for loc in valid_floors:
+        attack_func(history, loc[0], loc[1])
+```
+
+
+10. НЕОПТИМАЛЬНАЯ ПРОВЕРКА В GET_VALID_FLOORS
+---------------------------------------------
+Строки: 121, 128, 135, 142
+
+Проблема: В функции get_valid_floors проверка `[r - 1, c] not in valid_floors` 
+выполняется за O(n), где n - количество уже найденных этажей.
+
+Предложение: Использовать set для хранения посещенных позиций:
+
+```python
+def get_valid_floors(history, walked_set, valid_floors):
+    """Recursively find all valid floor tiles reachable from current position."""
+    state = history[-1][0]
+    loc = list(walked_set)[-1] if walked_set else None
+    if loc is None:
+        return
+    
+    r, c = loc
+    
+    # Try north
+    new_pos = (r - 1, c)
+    if state[r - 1][c] == FLOOR and new_pos not in walked_set:
+        walked_set.add(new_pos)
+        valid_floors.append([r - 1, c])
+        get_valid_floors(history, walked_set, valid_floors)
+    # ... аналогично для других направлений
+```
+
+Однако нужно учесть, что walked передается как список для сохранения пути. 
+Можно использовать set для быстрой проверки и список для порядка.
+
+
+11. ОТСУТСТВИЕ ТИПИЗАЦИИ
+-------------------------
+Проблема: Код не использует type hints, что затрудняет понимание типов данных 
+и может привести к ошибкам.
+
+Предложение: Добавить аннотации типов для улучшения читаемости и поддержки IDE:
+
+```python
+from typing import List, Tuple, Optional
+
+def solve(history: List[List]) -> None:
+    """Recursive function that solves the board."""
+    # ...
+
+def get_valid_floors(
+    history: List[List], 
+    walked: List[List[int]], 
+    valid_floors: List[List[int]]
+) -> None:
+    """Recursively find all valid floor tiles."""
+    # ...
+
+Location = Tuple[int, int]
+State = List[List[str]]
+HistoryEntry = Tuple[State, str, int, Location]
+```
+
+
+12. ОБРАБОТКА АРГУМЕНТОВ КОМАНДНОЙ СТРОКИ
+------------------------------------------
+Строки: 485-490
+
+Проблема: Обработка аргументов командной строки выглядит необычно: `sys.argv[1][1:]` 
+удаляет первый символ аргумента. Это может быть неочевидным для других разработчиков.
+
+Предложение: Использовать argparse для более понятной обработки аргументов:
+
+```python
+import argparse
+
+parser = argparse.ArgumentParser(description='Solve the knight and monsters puzzle')
+parser.add_argument('filename', nargs='?', default='test.txt',
+                    help='Input file with the board (default: test.txt)')
+args = parser.parse_args()
+filename = args.filename
+```
+
+Это сделает код более понятным и добавит автоматическую справку по использованию.
+
+
+13. ОТСУТСТВИЕ ДОКУМЕНТАЦИИ МОДУЛЯ
+-----------------------------------
+Проблема: В начале файла нет docstring модуля, объясняющего назначение программы.
+
+Предложение: Добавить docstring в начало файла:
+
+```python
+"""
+Knight and Monsters Puzzle Solver
+
+This module solves a puzzle where a knight must defeat all monsters on a board
+using different weapons (sword, spear, dagger, bow) with different costs.
+The goal is to find the solution with minimum cost.
+
+Usage:
+    python main.py [filename]
+
+Input format:
+    The input file should contain a grid with:
+    - 'W' for walls
+    - '.' for floor
+    - 'S' for start position
+    - 'R', 'P', 'B' for red, purple, and blue monsters respectively
+"""
+```
+
+
+14. ЖЕСТКО ЗАКОДИРОВАННОЕ ЗНАЧЕНИЕ В DO_TEXT_DIRECTION
+------------------------------------------------------
+Строки: 443-453
+
+Проблема: Функция do_text_direction использует цепочку if-elif без обработки 
+неожиданных значений. Если передать неожиданные координаты, функция вернет None.
+
+Предложение: Добавить обработку неожиданных случаев или использовать словарь:
+
+```python
+def do_text_direction(push_dir_row: int, push_dir_col: int) -> str:
+    """Returns the direction as a string based on row and column offsets."""
+    direction_map = {
+        (-1, 0): 'North',
+        (1, 0): 'South',
+        (0, -1): 'West',
+        (0, 1): 'East'
+    }
+    direction = direction_map.get((push_dir_row, push_dir_col))
+    if direction is None:
+        raise ValueError(f"Unexpected direction: ({push_dir_row}, {push_dir_col})")
+    return direction
+```
+
+
+15. ПОТЕНЦИАЛЬНАЯ ПРОБЛЕМА С ПРОИЗВОДИТЕЛЬНОСТЬЮ В MONSTER_HEALTH_REMAINING
+---------------------------------------------------------------------------
+Строки: 162-174
+
+Проблема: Функция каждый раз сканирует весь массив для подсчета здоровья монстров. 
+При частом вызове это может быть неэффективно.
+
+Предложение: Рассмотреть возможность кэширования или пересчета здоровья только 
+при изменениях состояния. Однако, учитывая, что состояние меняется часто, 
+полное сканирование может быть приемлемым компромиссом. Можно оптимизировать, 
+если это станет узким местом:
+
+```python
+def monster_health_remaining(state):
+    """Calculates the remaining health of monsters on the board."""
+    health_left = 0
+    for row in state:
+        for cell in row:
+            if cell == MONSTER_RED:
+                health_left += 3
+            elif cell == MONSTER_PURPLE:
+                health_left += 2
+            elif cell == MONSTER_BLUE:
+                health_left += 1
+    return health_left
+```
+
+Использование elif вместо отдельных if может быть немного быстрее, но разница 
+минимальна. Основная оптимизация здесь - убедиться, что функция вызывается 
+только когда необходимо.
+
+
+16. НЕИСПОЛЬЗУЕМЫЙ ИМПОРТ
+-------------------------
+Строка: 3
+
+Проблема: Импортирован модуль `copy`, но используется только `copy.deepcopy`. 
+Можно импортировать напрямую.
+
+Предложение: Изменить импорт для ясности:
+
+```python
+from copy import deepcopy
+
+# Использование:
+walked_new = deepcopy(walked)
+```
+
+Это сделает код немного чище, хотя текущий вариант тоже допустим.
+
+
+17. ОТСУТСТВИЕ ЛОГИРОВАНИЯ
+--------------------------
+Строки: 66, 72-73
+
+Проблема: Используется print для вывода отладочной информации. В production коде 
+лучше использовать модуль logging.
+
+Предложение: Использовать logging для более гибкого управления выводом:
+
+```python
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Вместо print('Best cost:', cost_best)
+logger.info(f'Best cost: {cost_best}')
+
+# Вместо print('bails:', bails)
+logger.debug(f'Bails: {bails}')
+```
+
+Это позволит контролировать уровень детализации вывода без изменения кода.
+
+
+18. СТИЛЬ ИМЕНОВАНИЯ
+--------------------
+Строки: по всему файлу
+
+Проблема: В целом стиль именования соответствует PEP 8 (snake_case для функций), 
+но некоторые переменные можно сделать более описательными (r, c вместо row, col).
+
+Предложение: Использовать более описательные имена там, где это улучшит читаемость:
+
+```python
+# Вместо:
+r = loc[0]
+c = loc[1]
+
+# Можно использовать:
+row = location[0]
+col = location[1]
+```
+
+Однако для коротких циклов и локальных переменных краткие имена (r, c) могут быть 
+приемлемы, если это общепринято в проекте.
+
+
+19. ОТСУТСТВИЕ UNIT-ТЕСТОВ
+--------------------------
+Проблема: В проекте нет тестов, что затрудняет рефакторинг и может привести 
+к регрессиям.
+
+Предложение: Добавить unit-тесты для ключевых функций:
+
+```python
+# test_main.py
+import unittest
+from main import hit_monster, monster_health_remaining, do_text_direction
+
+class TestMain(unittest.TestCase):
+    def test_hit_monster(self):
+        self.assertEqual(hit_monster('R'), 'P')
+        self.assertEqual(hit_monster('P'), 'B')
+        self.assertEqual(hit_monster('B'), '.')
+    
+    def test_do_text_direction(self):
+        self.assertEqual(do_text_direction(-1, 0), 'North')
+        self.assertEqual(do_text_direction(1, 0), 'South')
+        # ...
+```
+
+Это повысит надежность кода и упростит его поддержку.
+
+
+20. ПОТЕНЦИАЛЬНАЯ ПРОБЛЕМА С РЕКУРСИЕЙ
+---------------------------------------
+Строки: 46-104, 107-146
+
+Проблема: Использование глубокой рекурсии может привести к переполнению стека 
+при больших досках или сложных сценариях.
+
+Предложение: Рассмотреть возможность использования итеративного подхода с явным 
+стеком для больших задач. Однако, если текущая реализация работает для ожидаемых 
+размеров входных данных, это может быть преждевременной оптимизацией. Можно добавить 
+проверку глубины рекурсии:
+
+```python
+import sys
+
+sys.setrecursionlimit(10000)  # Если необходимо
+
+# Или использовать счетчик глубины:
+def solve(history, depth=0):
+    if depth > MAX_DEPTH:
+        return  # Защита от слишком глубокой рекурсии
+    # ...
+```
+
+
+ИТОГОВЫЕ РЕКОМЕНДАЦИИ
+---------------------
+
+Приоритетные улучшения:
+1. Вынести глобальные переменные в класс (улучшит тестируемость)
+2. Устранить дублирование кода в функциях проверки атак (DRY)
+3. Заменить список на set для history_complete (производительность)
+4. Добавить проверки границ массива (безопасность)
+5. Вынести магические числа в константы (читаемость)
+
+Средний приоритет:
+6. Добавить type hints
+7. Использовать argparse для аргументов командной строки
+8. Добавить docstring модуля
+9. Разбить длинные функции на более мелкие
+
+Низкий приоритет (но желательно):
+10. Добавить unit-тесты
+11. Использовать logging вместо print
+12. Рассмотреть оптимизацию deepcopy
+
+Код в целом работает, но рефакторинг по указанным пунктам улучшит его 
+поддерживаемость, читаемость и производительность.
+
