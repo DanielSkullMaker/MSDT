@@ -2,6 +2,15 @@ import pytest
 from unittest.mock import MagicMock
 from main import UserService, UserRepository, User
 
+import os
+import sys
+
+ROOT = os.path.dirname(__file__)
+MSDT_5_DIR = os.path.join(ROOT, "msdt-5")
+
+if MSDT_5_DIR not in sys.path:
+    sys.path.insert(0, MSDT_5_DIR)
+
 # Фикстура для реального репозитория (без моков)
 @pytest.fixture
 def real_repository():
