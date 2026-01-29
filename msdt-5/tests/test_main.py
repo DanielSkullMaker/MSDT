@@ -1,15 +1,13 @@
 import pytest
 from unittest.mock import MagicMock
-from main import UserService, UserRepository, User
-
 import os
 import sys
 
-ROOT = os.path.dirname(__file__)
-MSDT_5_DIR = os.path.join(ROOT, "msdt-5")
+ROOT = os.path.dirname(os.path.dirname(__file__))  # каталог проекта `msdt-5`
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 
-if MSDT_5_DIR not in sys.path:
-    sys.path.insert(0, MSDT_5_DIR)
+from main import UserService, UserRepository, User
 
 # Фикстура для реального репозитория (без моков)
 @pytest.fixture
